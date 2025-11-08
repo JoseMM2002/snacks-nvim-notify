@@ -24,7 +24,12 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
   "JoseMM2002/snacks-nvim-notify",
   dependencies = { "folke/snacks.nvim", "rcarriga/nvim-notify" },
   config = function()
-    require("snacks-nvim-notify").setup()
+    require("snacks-nvim-notify").setup({
+      width = 0.6,
+      height = 0.5,
+      border = "rounded",
+      truncate_width = 80,
+    })
   end,
 },
 ```
@@ -40,4 +45,3 @@ After installation the plugin registers the `:SnacksNotifications` user command.
 3. Press `<CR>` to reopen the selected notification in a floating window. Close it with `q` or `<Esc>`.
 
 The module exposes `require("snacks-nvim-notify").setup(opts)` if you need to extend the behaviour later on. Currently all functionality works out of the box without passing options.
-
