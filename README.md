@@ -44,4 +44,9 @@ After installation the plugin registers the `:SnacksNotifications` user command.
 2. See an inline preview of the selected notification within the picker.
 3. Press `<CR>` to reopen the selected notification in a floating window. Close it with `q` or `<Esc>`.
 
-The module exposes `require("snacks-nvim-notify").setup(opts)` if you need to extend the behaviour later on. Currently all functionality works out of the box without passing options.
+The module exposes `require("snacks-nvim-notify").setup(opts)` if you need to extend the behaviour later on. You can also call `require("snacks-nvim-notify").notifications_history()` directly if you need to launch the picker programmatically. Currently all functionality works out of the box without passing options.
+
+## Demo
+
+![](assets/2025-11-08-09-49-51.png)
+![](assets/2025-11-08-09-50-55.png)
