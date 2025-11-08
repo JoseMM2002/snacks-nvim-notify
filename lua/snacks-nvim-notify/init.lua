@@ -1,5 +1,12 @@
 local M = {}
 
+M.opts = {
+	width = 0.6,
+	height = 0.5,
+	border = "rounded",
+	truncate_width = 80,
+}
+
 function M.setup(opts)
 	M.opts = vim.tbl_deep_extend("force", {}, opts or {})
 	vim.api.nvim_create_user_command("SnacksNotifications", function()
@@ -37,45 +44,38 @@ local function history_to_items(history)
 	return items
 end
 
-local function level_hl(level)
-	local lvl = (level or "INFO"):upper()
-	return "Notify" .. lvl .. "Title"
-end
-
 local function fmt_item(item)
 	local msg = item.message or ""
 	if #msg > 120 then
-		msg = msg:sub(1, 117) .. "..."
+		msg = msg:sub(1, M.opts.truncate_width) .. "..."
 	end
 	local lvl = (item.level or "INFO"):upper()
 	local notify_icon_hl = "Notify" .. lvl .. "Icon"
 	local notify_title_hl = "Notify" .. lvl .. "Title"
+	local nottify_message_hl = "Notify" .. lvl .. "Body"
 
 	return {
-		{ item.icon or "", notify_icon_hl },
-		{ " | ", notify_icon_hl },
-		{ item.level, level_hl(item.level) },
-		{ "  " },
-		{ item.category or "", "Directory" },
-		{ "  " },
 		{ item.clock or "", "Comment" },
 		{ "  " },
-		{ msg, notify_title_hl },
+		{ item.icon or "", notify_icon_hl },
+		{ " ", notify_icon_hl },
+		{ item.level, notify_title_hl },
+		{ "  " },
+		{ msg, nottify_message_hl },
 	}
 end
 
-local function open_float(opts)
-	opts = opts or {}
+local function open_float()
 	local buf = vim.api.nvim_create_buf(false, true)
-	local width = math.floor(vim.o.columns * (opts.w or 0.6))
-	local height = math.floor(vim.o.lines * (opts.h or 0.5))
+	local width = math.floor(vim.o.columns * (M.opts.width or 0.6))
+	local height = math.floor(vim.o.lines * (M.opts.height or 0.5))
 	local row = math.floor((vim.o.lines - height) / 2 - 1)
 	local col = math.floor((vim.o.columns - width) / 2)
 
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",
 		style = "minimal",
-		border = opts.border or "rounded",
+		border = M.opts.border or "rounded",
 		width = width,
 		height = height,
 		row = row,
@@ -83,43 +83,36 @@ local function open_float(opts)
 		noautocmd = true,
 	})
 
-	vim.bo[buf].buftype = "nofile"
-	vim.bo[buf].bufhidden = "wipe"
-	vim.bo[buf].swapfile = false
-	vim.bo[buf].modifiable = true
-	vim.wo[win].wrap = false
-	vim.wo[win].conceallevel = 2
-
 	return buf, win
 end
 
--- Build title + body lines consistently for preview and confirm
 function M.build_lines(item)
-	local it = item or {}
-	local notif = it.raw or {}
-	local icon = it.icon or notif.icon or ""
-	local category = it.category or (notif.title and notif.title[1]) or "Notify"
-	local clock = it.clock or (notif.title and notif.title[2]) or ""
+	local title_chunks = fmt_item(item)
+	title_chunks[#title_chunks] = nil -- remove message part
+	title_chunks[#title_chunks] = nil -- remove trailing space
 
-	local lines = {}
-	local title_prefix = (icon ~= "" and (icon .. " | ") or "")
-	local title_text = string.format("%s%s%s", title_prefix, category or "", (clock ~= "" and ("  " .. clock) or ""))
-	table.insert(lines, title_text)
-
-	if type(notif.message) == "table" then
-		for _, m in ipairs(notif.message) do
-			table.insert(lines, tostring(m))
+	local title, spans = "", {}
+	local col = 0
+	for _, chunk in ipairs(title_chunks) do
+		local text = chunk[1] or ""
+		local hl = chunk[2]
+		local len = string.len(text)
+		if hl ~= nil then
+			spans[#spans + 1] = { hl = hl, from = col, to = col + len }
 		end
-	elseif notif.message ~= nil then
-		table.insert(lines, tostring(notif.message))
-	elseif it.message then
-		table.insert(lines, tostring(it.message))
+		col = col + len
+		title = title .. text
 	end
 
-	return lines, icon
+	local src = (item and item.raw and item.raw.message) or {}
+	local lines = { title }
+	for i = 1, #src do
+		lines[#lines + 1] = tostring(src[i])
+	end
+	local level = (item and (item.level or (item.raw and item.raw.level)) or "INFO"):upper()
+	return spans, lines, level
 end
 
--- Apply window options and level-based border highlight
 function M.apply_window_opts(win, level)
 	if not (win and vim.api.nvim_win_is_valid(win)) then
 		return
@@ -132,42 +125,28 @@ function M.apply_window_opts(win, level)
 	pcall(vim.api.nvim_set_option_value, "winhighlight", "FloatBorder:" .. border_hl, { win = win })
 end
 
--- Highlight the icon and title part on the first line
-function M.highlight_title(buf, level, icon, first_line)
+function M.set_notification_window(buf, win, item)
+	local spans, lines, level = M.build_lines(item)
+
+	vim.bo[buf].modifiable = true
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+	vim.bo[buf].buftype = "nofile"
+	vim.bo[buf].bufhidden = "wipe"
+	vim.bo[buf].swapfile = false
+	vim.bo[buf].modifiable = false
+
+	M.apply_window_opts(win, level)
+
 	local ns = vim.api.nvim_create_namespace("snacks_notify_title_hl")
 	vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-	local icon_hl = "Notify" .. (level or "INFO") .. "Icon"
-	local title_hl = "Notify" .. (level or "INFO") .. "Title"
-	local first = first_line or ""
-	-- icon prefix includes " | " in build_lines, but we only color the icon chars
-	local only_icon = (icon ~= "" and (icon .. " ") or "")
-	local icon_len = icon ~= "" and vim.fn.strdisplaywidth(only_icon) or 0
-	if icon_len > 0 then
-		vim.hl.range(buf, ns, icon_hl, { 0, 0 }, { 0, icon_len }, { inclusive = false })
+	for _, s in ipairs(spans) do
+		vim.hl.range(buf, ns, s.hl, { 0, s.from }, { 0, s.to }, { inclusive = false })
 	end
-	vim.hl.range(buf, ns, title_hl, { 0, icon_len }, { 0, #first }, { inclusive = false })
 end
 
 function M.preview_notify(ctx)
 	local ok, err = pcall(function()
-		local it = ctx.item or {}
-		local notif = it.raw or {}
-		local level = (it.level or notif.level or "INFO"):upper()
-
-		local buf = ctx.bufnr or ctx.buf
-		local win = ctx.win or ctx.winid
-
-		local lines, icon = M.build_lines(it)
-
-		vim.bo[buf].modifiable = true
-		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-		vim.bo[buf].buftype = "nofile"
-		vim.bo[buf].bufhidden = "wipe"
-		vim.bo[buf].swapfile = false
-		vim.bo[buf].modifiable = false
-
-		M.apply_window_opts(win, level)
-		M.highlight_title(buf, level, icon, lines[1] or "")
+		M.set_notification_window(ctx.buf, ctx.win, ctx.item)
 	end)
 	if not ok then
 		vim.notify("preview_notify error: " .. tostring(err), vim.log.levels.ERROR)
@@ -195,23 +174,8 @@ function M.notifications_history()
 
 		confirm = function(picker, item)
 			picker:close()
-
-			local notif = item.raw or {}
-			local level = (item.level or notif.level or "INFO"):upper()
-			local buf, win = open_float({ w = 0.65, h = 0.5, border = "rounded" })
-
-			local lines, icon = M.build_lines(item)
-
-			vim.bo[buf].modifiable = true
-			vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-			vim.bo[buf].modifiable = false
-			vim.bo[buf].buftype = "nofile"
-			vim.bo[buf].bufhidden = "wipe"
-			vim.bo[buf].swapfile = false
-
-			M.apply_window_opts(win, level)
-			M.highlight_title(buf, level, icon, lines[1] or "")
-
+			local buf, win = open_float()
+			M.set_notification_window(buf, win, item)
 			local function close_win()
 				if vim.api.nvim_win_is_valid(win) then
 					vim.api.nvim_win_close(win, true)
